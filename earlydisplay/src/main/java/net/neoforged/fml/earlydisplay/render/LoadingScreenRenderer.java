@@ -73,6 +73,9 @@ public class LoadingScreenRenderer implements AutoCloseable {
     // Scheduled background rendering of the loading screen
     private final ScheduledFuture<?> automaticRendering;
 
+    // Gets set to the main MC thread once control is being handed to vanilla
+    private volatile Thread controllingThread;
+
     private final List<RenderElement> elements;
 
     private final SimpleBufferBuilder buffer = new SimpleBufferBuilder("shared", 8192);
@@ -204,6 +207,7 @@ public class LoadingScreenRenderer implements AutoCloseable {
         if (!renderLock.tryAcquire(5, TimeUnit.SECONDS)) {
             throw new TimeoutException();
         }
+        this.controllingThread = Thread.currentThread();
         this.automaticRendering.cancel(false);
         renderLock.release();
     }
@@ -220,6 +224,12 @@ public class LoadingScreenRenderer implements AutoCloseable {
             return;
         }
         try {
+            if (this.automaticRendering.isCancelled() && Thread.currentThread() != this.controllingThread) {
+                // This handles the case where we are on the BG thread, and stopAutomaticRendering() was called right
+                // before we attempted to acquire the lock. Control has been passed to vanilla now, so we should not try
+                // to render on the BG thread anymore.
+                return;
+            }
             long nt;
             if ((nt = System.nanoTime()) < nextFrameTime) {
                 return;
